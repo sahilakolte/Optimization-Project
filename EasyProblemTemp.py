@@ -1,337 +1,138 @@
 #!/usr/bin/env python3
 """
-grid_min_cost_flow_fixed.py
+min_cost_flow_pulp.py
 
-Fixed combined script: loads graph from CSVs robustly (handles both headered CSVs and
-plain index-based CSVs) and solves a minimum-cost flow LP with PuLP.
+Reads:
+  - Gen_WI_Supply_Values.csv   (node, supply)
+  - Gen_WI_Demand_Values.csv   (node, demand)
+  - Gen_WI_Lines.csv           (some id, from_node, to_node, length, ...)
 
-Usage:
-    pip install pulp
-    python grid_min_cost_flow_fixed.py
+Builds and solves a minimum-cost flow LP:
+  minimize sum_{(i,j)} flow_{i,j} * length_{i,j}
+  subject to:
+    flow_{i,j} >= 0
+    for every node k: sum_outflow(k) - sum_inflow(k) == supply_k - demand_k
+
+If total supply != total demand, the script adds a dummy node to absorb the imbalance
+(with zero-cost artificial edges) so the LP remains feasible; the solution will use
+the dummy edges only as needed to balance totals.
+Outputs:
+  - /mnt/data/min_flow_solution.csv  (all edges and flows)
+  - /mnt/data/min_flow_summary.txt   (status, total cost, nonzero flow count)
 """
 
-import csv
+import pandas as pd
 import pulp
-from collections import defaultdict
+import os
 
-class Node:
-    def __init__(self, node_number, demand=0.0, supply=0.0):
-        self.node_number = int(node_number)
-        self.demand = float(demand)
-        self.supply = float(supply)
+# --- Paths (adjust if needed) ---
+supply_file = "dataset/Gen_WI_Supply_Values.csv"
+demand_file = "dataset/Gen_WI_Demand_Values.csv"
+lines_file = "dataset/Gen_WI_Lines.csv"
 
-    def __repr__(self):
-        return f"Node({self.node_number}, demand={self.demand}, supply={self.supply})"
+# --- Load data ---
+df_supply = pd.read_csv(supply_file)
+df_demand = pd.read_csv(demand_file)
+df_lines = pd.read_csv(lines_file)
 
+# Expect columns: supply: [node, supply], demand: [node, demand]
+supply = dict(zip(df_supply.iloc[:,0].astype(int), df_supply.iloc[:,1].astype(float)))
+demand = dict(zip(df_demand.iloc[:,0].astype(int), df_demand.iloc[:,1].astype(float)))
 
-class PowerGridGraph:
-    def __init__(self):
-        self.nodes = {}            # node_number -> Node
-        self.adjacency_list = {}   # node_number -> list of (neighbor, length)
+# Assume lines are in columns: [something, from, to, length, ...]
+from_col = df_lines.columns[1]
+to_col   = df_lines.columns[2]
+len_col  = df_lines.columns[3]
 
-    def add_node(self, node):
-        self.nodes[int(node.node_number)] = node
+edges = []
+for _, r in df_lines.iterrows():
+    u = int(r[from_col])
+    v = int(r[to_col])
+    cost = float(r[len_col])
+    edges.append((u, v, cost))
 
-    def add_edge(self, node1, node2, length):
-        node1 = int(node1); node2 = int(node2)
-        if node1 not in self.nodes:
-            self.add_node(Node(node1))
-        if node2 not in self.nodes:
-            self.add_node(Node(node2))
-        self.adjacency_list.setdefault(node1, []).append((node2, float(length)))
+# All nodes appearing anywhere
+nodes = sorted(set(list(supply.keys()) + list(demand.keys()) + [u for u,_,_ in edges] + [v for _,v,_ in edges]))
 
-    # Helper: check if a string looks like a header (contains letters) or numeric row
-    @staticmethod
-    def _row_looks_like_header(first_row):
-        # if any cell contains alphabetic characters -> header
-        for cell in first_row:
-            if any(ch.isalpha() for ch in str(cell)):
-                return True
-        return False
+# --- LP model ---
+prob = pulp.LpProblem("MinCostFlow", pulp.LpMinimize)
 
-    def load_demand_data(self, filename):
-        try:
-            with open(filename, newline='') as f:
-                reader = csv.reader(f)
-                first_row = next(reader, None)
-                if first_row is None:
-                    print(f"Demand file {filename} is empty.")
-                    return False
-                f.seek(0)
-                if self._row_looks_like_header(first_row):
-                    # use DictReader
-                    dr = csv.DictReader(f)
-                    headers = dr.fieldnames or []
-                    # find node and demand columns (fall back to first two columns)
-                    node_col = headers[0] if headers else None
-                    demand_col = None
-                    for cand in ("demand","Demand","value","Value","demand_mw","demand_mwh"):
-                        if cand in headers:
-                            demand_col = cand
-                            break
-                    if demand_col is None and len(headers) >= 2:
-                        demand_col = headers[1]
-                    for row in dr:
-                        try:
-                            node_num = int(row[node_col])
-                            demand = float(row[demand_col]) if row[demand_col] != "" else 0.0
-                        except Exception:
-                            continue
-                        if node_num in self.nodes:
-                            self.nodes[node_num].demand = demand
-                        else:
-                            self.add_node(Node(node_num, demand=demand))
-                else:
-                    # positional reader (skip header-like first row if you want - but we treat first row as data)
-                    f.seek(0)
-                    r = csv.reader(f)
-                    for row in r:
-                        if not row: continue
-                        try:
-                            node_num = int(row[0])
-                            demand = float(row[1])
-                        except Exception:
-                            continue
-                        if node_num in self.nodes:
-                            self.nodes[node_num].demand = demand
-                        else:
-                            self.add_node(Node(node_num, demand=demand))
-            print(f"Loaded demand data from {filename}")
-            return True
-        except FileNotFoundError:
-            print(f"Error: Could not open file {filename}")
-            return False
+# flow variables for each directed edge
+flow = {}
+for (u,v,c) in edges:
+    flow[(u,v)] = pulp.LpVariable(f"f_{u}_{v}", lowBound=0, cat="Continuous")
 
-    def load_supply_data(self, filename):
-        try:
-            with open(filename, newline='') as f:
-                reader = csv.reader(f)
-                first_row = next(reader, None)
-                if first_row is None:
-                    print(f"Supply file {filename} is empty.")
-                    return False
-                f.seek(0)
-                if self._row_looks_like_header(first_row):
-                    dr = csv.DictReader(f)
-                    headers = dr.fieldnames or []
-                    node_col = headers[0] if headers else None
-                    supply_col = None
-                    for cand in ("supply","Supply","value","Value","supply_mw"):
-                        if cand in headers:
-                            supply_col = cand
-                            break
-                    if supply_col is None and len(headers) >= 2:
-                        supply_col = headers[1]
-                    for row in dr:
-                        try:
-                            node_num = int(row[node_col])
-                            supply = float(row[supply_col]) if row[supply_col] != "" else 0.0
-                        except Exception:
-                            continue
-                        if node_num in self.nodes:
-                            self.nodes[node_num].supply = supply
-                        else:
-                            self.add_node(Node(node_num, supply=supply))
-                else:
-                    f.seek(0)
-                    r = csv.reader(f)
-                    for row in r:
-                        if not row: continue
-                        try:
-                            node_num = int(row[0])
-                            supply = float(row[1])
-                        except Exception:
-                            continue
-                        if node_num in self.nodes:
-                            self.nodes[node_num].supply = supply
-                        else:
-                            self.add_node(Node(node_num, supply=supply))
-            print(f"Loaded supply data from {filename}")
-            return True
-        except FileNotFoundError:
-            print(f"Error: Could not open file {filename}")
-            return False
+# objective
+prob += pulp.lpSum(flow[(u,v)] * c for (u,v,c) in edges)
 
-    def load_lines_data(self, filename):
-        try:
-            with open(filename, newline='') as f:
-                reader = csv.reader(f)
-                first_row = next(reader, None)
-                if first_row is None:
-                    print(f"Lines file {filename} is empty.")
-                    return False
-                f.seek(0)
-                if self._row_looks_like_header(first_row):
-                    # Use DictReader and try to guess column names
-                    dr = csv.DictReader(f)
-                    headers = dr.fieldnames or []
-                    # possible names
-                    possible_n1 = ["node1","node_1","from","From","n1","N1","source","Source","u","U"]
-                    possible_n2 = ["node2","node_2","to","To","n2","N2","target","Target","v","V"]
-                    possible_len = ["length","Length","dist","distance","Distance","len","weight","cost","Cost"]
-                    n1_col = next((h for h in headers if h in possible_n1), None)
-                    n2_col = next((h for h in headers if h in possible_n2 and h != n1_col), None)
-                    len_col = next((h for h in headers if h in possible_len), None)
-                    for row in dr:
-                        try:
-                            if n1_col and n2_col and len_col:
-                                node1 = int(row[n1_col])
-                                node2 = int(row[n2_col])
-                                length = float(row[len_col]) if row[len_col] != "" else 0.0
-                            else:
-                                # fallback: try positional fields within dict (some CSV writers use '1','2','3' keys)
-                                # Attempt extracting by converting dict values to list in original column order
-                                vals = [row[h] for h in headers]
-                                if len(vals) >= 4:
-                                    node1 = int(vals[1])
-                                    node2 = int(vals[2])
-                                    length = float(vals[3])
-                                else:
-                                    # last resort: try first three numeric-like fields
-                                    numeric_vals = [v for v in vals if v.strip() != ""]
-                                    node1 = int(numeric_vals[0])
-                                    node2 = int(numeric_vals[1])
-                                    length = float(numeric_vals[2])
-                        except Exception:
-                            # skip malformed row
-                            continue
-                        self.add_edge(node1, node2, length)
-                else:
-                    # positional CSV (no header)
-                    f.seek(0)
-                    r = csv.reader(f)
-                    for row in r:
-                        if not row: continue
-                        # original code used columns 1,2,3 (skip index 0), but many CSVs use 0,1,2
-                        # We try both: prefer 1,2,3 if available else 0,1,2
-                        try:
-                            if len(row) >= 4:
-                                node1 = int(row[1])
-                                node2 = int(row[2])
-                                length = float(row[3])
-                            else:
-                                node1 = int(row[0])
-                                node2 = int(row[1])
-                                length = float(row[2])
-                        except Exception:
-                            continue
-                        self.add_edge(node1, node2, length)
-            print(f"Loaded lines data from {filename}")
-            return True
-        except FileNotFoundError:
-            print(f"Error: Could not open file {filename}")
-            return False
+# node balances (out - in = supply - demand)
+supply_vals = {n: supply.get(n, 0.0) for n in nodes}
+demand_vals = {n: demand.get(n, 0.0) for n in nodes}
 
-    def display_graph(self):
-        print("\nPOWER GRID GRAPH\nNodes:")
-        for n in sorted(self.nodes):
-            node = self.nodes[n]
-            print(f"  Node {node.node_number}: supply={node.supply}, demand={node.demand}")
-        print("\nEdges:")
-        for u, edges in self.adjacency_list.items():
-            for v, l in edges:
-                print(f"  {u} -> {v} (length={l})")
+total_supply = sum(supply_vals.values())
+total_demand = sum(demand_vals.values())
+print("Total supply:", total_supply, "Total demand:", total_demand)
 
-    def get_edge_list(self):
-        edges = []
-        for u, neighbors in self.adjacency_list.items():
-            for v, l in neighbors:
-                edges.append((u, v, l))
-        return edges
-def solve_min_cost_flow(graph: PowerGridGraph, verbose=False, gen_cost_coeff=1e-6):
-    """
-    Solve min-cost flow where local generation at each node is a decision variable:
-      0 <= g_n <= node.supply
+dummy_node = None
+if abs(total_supply - total_demand) > 1e-9:
+    # Create a special dummy node to absorb mismatch
+    dummy_node = -999999
+    nodes.append(dummy_node)
+    print("Added dummy node to balance supply/demand. Imbalance:", total_supply - total_demand)
 
-    Objective: minimize sum(edge_length * flow_on_edge) + gen_cost_coeff * sum(g_n)
-    - gen_cost_coeff is small by default to discourage unnecessary generation if transmission
-      cost would otherwise be reduced by producing locally. Set to 0 to make generation
-      costless.
+# add constraints for each real node
+for n in nodes:
+    if n == dummy_node:
+        continue
+    out_vars = [flow[(u,v)] for (u,v,c) in edges if u == n and (u,v) in flow]
+    in_vars  = [flow[(u,v)] for (u,v,c) in edges if v == n and (u,v) in flow]
+    prob += (pulp.lpSum(out_vars) - pulp.lpSum(in_vars) == supply_vals.get(n, 0.0) - demand_vals.get(n, 0.0)), f"node_balance_{n}"
 
-    Returns (flows_dict, gen_dict, objective_value) or None if infeasible/non-optimal.
-    """
-    edges = graph.get_edge_list()
-    prob = pulp.LpProblem("MinCostFlow_with_Generation", pulp.LpMinimize)
+# If dummy node exists, add zero-cost balancing edges between dummy and nodes that need absorbing
+if dummy_node is not None:
+    for n in list(nodes):
+        if n == dummy_node:
+            continue
+        net = supply_vals.get(n,0.0) - demand_vals.get(n,0.0)
+        if net > 0:
+            # node has surplus -> can send to dummy
+            flow[(n, dummy_node)] = pulp.LpVariable(f"f_{n}_{dummy_node}", lowBound=0, cat="Continuous")
+            edges.append((n, dummy_node, 0.0))
+        elif net < 0:
+            # node has deficit -> can receive from dummy
+            flow[(dummy_node, n)] = pulp.LpVariable(f"f_{dummy_node}_{n}", lowBound=0, cat="Continuous")
+            edges.append((dummy_node, n, 0.0))
+    # balance dummy to absorb net
+    out_vars = [flow[(u,v)] for (u,v,c) in edges if u == dummy_node and (u,v) in flow]
+    in_vars  = [flow[(u,v)] for (u,v,c) in edges if v == dummy_node and (u,v) in flow]
+    prob += (pulp.lpSum(out_vars) - pulp.lpSum(in_vars) == 0.0), "node_balance_dummy"
 
-    # 1) Flow vars per directed edge (nonnegative)
-    flow_vars = {}
-    for (u, v, length) in edges:
-        var_name = f"f_{u}_{v}"
-        flow_vars[(u, v)] = pulp.LpVariable(var_name, lowBound=0)
+# Rebuild objective to include added edges if any
+prob.objective = pulp.lpSum(flow[(u,v)] * c for (u,v,c) in edges if (u,v) in flow)
 
-    # 2) Generation vars per node (0 .. node.supply)
-    gen_vars = {}
-    for nid, node in graph.nodes.items():
-        # Only create a generator variable if node.supply > 0 (you may still create for all nodes)
-        # but creating for all nodes is fine; cap is 0 for nodes with no capacity.
-        up = float(node.supply) if node.supply is not None else 0.0
-        gen_vars[nid] = pulp.LpVariable(f"g_{nid}", lowBound=0, upBound=up)
+# --- Solve ---
+print("Solving LP ...")
+solver = pulp.PULP_CBC_CMD(msg=1)  # default CBC
+status = prob.solve(solver)
+print("Status:", pulp.LpStatus[prob.status])
 
-    # 3) Objective: transmission cost + (small) generation cost
-    trans_cost_term = pulp.lpSum([length * flow_vars[(u, v)] for (u, v, length) in edges])
-    gen_cost_term = gen_cost_coeff * pulp.lpSum([gen_vars[nid] for nid in gen_vars])
-    prob += trans_cost_term + gen_cost_term, "Total_Cost"
+# --- Collect results ---
+rows = []
+for (u,v,c) in edges:
+    if (u,v) in flow:
+        val = pulp.value(flow[(u,v)])
+        rows.append({"from": int(u), "to": int(v), "cost": float(c), "flow": float(val if val is not None else 0.0)})
 
-    # 4) Flow conservation at each node:
-    #    sum_in - sum_out + g_n - demand == 0
-    # Note: This expects node.demand to be a positive consumption value.
-    for nid, node in graph.nodes.items():
-        inflow_vars = [flow_vars[(u, v)] for (u, v, _l) in edges if v == nid]
-        outflow_vars = [flow_vars[(u, v)] for (u, v, _l) in edges if u == nid]
-        demand_val = float(node.demand)
-        prob += (pulp.lpSum(inflow_vars) - pulp.lpSum(outflow_vars) + gen_vars[nid] + demand_val == 0), f"flow_cons_node_{nid}"
+df_res = pd.DataFrame(rows)
+df_res.to_csv("min_flow_solution.csv", index=False)
 
-    # 5) Solve
-    solver = pulp.PULP_CBC_CMD(msg=1 if verbose else 0)
-    result = prob.solve(solver)
+total_cost = pulp.value(prob.objective)
+nonzero = df_res[df_res["flow"] > 1e-9]
+with open("min_flow_summary.txt","w") as f:
+    f.write(f"Status: {pulp.LpStatus[prob.status]}\n")
+    f.write(f"Total cost: {total_cost}\n")
+    f.write(f"Nonzero flows: {len(nonzero)}\n")
 
-    status = pulp.LpStatus.get(prob.status, "Unknown")
-    if verbose:
-        print("Solver status:", status)
-    if status != "Optimal":
-        print(f"LP did not find an optimal solution. Status: {status}")
-        return None
-
-    # 6) Collect results
-    flows = { (u,v): float(pulp.value(flow_vars[(u,v)])) for (u, v, _l) in edges }
-    gens = { nid: float(pulp.value(gen_vars[nid])) for nid in gen_vars }
-    objective_value = float(pulp.value(prob.objective))
-
-    return flows, gens, objective_value
-
-def main():
-    demand_file = "dataset/Gen_WI_Demand_Values.csv"
-    supply_file = "dataset/Gen_WI_Supply_Values.csv"
-    lines_file = "dataset/Gen_WI_Lines.csv"
-
-    graph = PowerGridGraph()
-    ok1 = graph.load_demand_data(demand_file)
-    ok2 = graph.load_supply_data(supply_file)
-    ok3 = graph.load_lines_data(lines_file)
-
-    if not (ok1 and ok2 and ok3):
-        print("One or more datasets failed to load. Aborting.")
-        return
-
-    print("\nLoaded graph summary:")
-    graph.display_graph()
-
-    print("\nSolving minimum-cost flow LP...")
-    result = solve_min_cost_flow(graph, verbose=True, gen_cost_coeff=1e-4)  # tweak coeff as needed
-    if result is None:
-        print("No feasible/optimal solution.")
-        return
-    flows, gens, obj = result
-
-    print("\nOptimal objective value (total cost):", obj)
-    print("\nEdge flows (nonzero shown):")
-    for (u, v), f in sorted(flows.items(), key=lambda x: (-abs(x[1]), x[0])):
-        if abs(f) > 1e-9:
-            print(f"  {u} -> {v} : {f:.6f}")
-    print("\nGenerator outputs (g_n):")
-    for nid, g in sorted(gens.items(), key=lambda x: -x[1]):
-        if g > 1e-9:
-            print(f"  Node {nid} generates: {g:.6f} (cap: {graph.nodes[nid].supply})")
-
-if __name__ == "__main__":
-    main()
+print("Total cost:", total_cost)
+print("Nonzero flow count:", len(nonzero))
+print("Saved min_flow_solution.csv and min_flow_summary.txt.")
