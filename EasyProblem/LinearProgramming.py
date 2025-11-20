@@ -2,9 +2,9 @@ import pandas as pd
 import pulp
 
 # --- Paths (adjust if needed) ---
-supply_file = "dataset/Gen_WI_Supply_Values.csv"
-demand_file = "dataset/Gen_WI_Demand_Values.csv"
-lines_file = "dataset/Gen_WI_Lines.csv"
+supply_file = "../dataset/Gen_WI_Supply_Values.csv"
+demand_file = "../dataset/Gen_WI_Demand_Values.csv"
+lines_file = "../dataset/Gen_WI_Lines.csv"
 
 # --- Load data ---
 df_supply = pd.read_csv(supply_file)
