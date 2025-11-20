@@ -1,0 +1,3 @@
+Status: optimal_inaccurate
+Total cost: 6064981.035760223
+Solver: CVXPY
