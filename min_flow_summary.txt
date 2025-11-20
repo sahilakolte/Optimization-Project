@@ -1,3 +1,2 @@
-Status: Infeasible
-Total cost: 5506.050425178068
-Nonzero flows: 11
+Status: Optimal
+Total cost: 6064982.436493267
