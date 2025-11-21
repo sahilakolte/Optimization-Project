@@ -46,7 +46,7 @@ costs = np.array([c for _, _, c in edges])
 # Objective: minimize sum of SQUARED flows weighted by costs
 # This is convex since square function is convex
 # Using cp.sum_squares or cp.square both work
-objective = cp.Minimize(costs @ cp.square(flow))
+objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
 
 # Alternative formulations (all equivalent):
 # objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
@@ -84,7 +84,13 @@ prob = cp.Problem(objective, constraints)
 
 # Solve - quadratic problems work well with OSQP, ECOS, or SCS
 try:
-    prob.solve(solver=cp.OSQP, verbose=True)
+    prob.solve(
+        solver=cp.OSQP,
+        verbose=True,
+        max_iter=300_000,
+        eps_abs=1e-3,
+        eps_rel=1e-3
+    )
     print(f"Solved with OSQP")
 except:
     try:

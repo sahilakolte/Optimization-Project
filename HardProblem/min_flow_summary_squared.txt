@@ -1,0 +1,4 @@
+Status: optimal
+Objective: Minimize sum of (cost * flow²)
+Total cost: 7078626123.550456
+Solver: CVXPY
