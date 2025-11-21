@@ -1,4 +1,4 @@
-Bus#,From_Node,To_Node,Length
+Line#,From_Node,To_Node,Resistance
 1,14430,13769,0.176627083
 2,14429,13074,0.10297971
 3,14428,14036,0.084388589
