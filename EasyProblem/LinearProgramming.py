@@ -46,7 +46,7 @@ for _, r in df_lines.iterrows():
 
     # Distance cost using haversine
     cost = haversine(bus_lon[u], bus_lat[u], bus_lon[v], bus_lat[v])
-    
+
     edges.append((u, v, cost))
 
 # All nodes in the graph
@@ -84,7 +84,7 @@ for n in nodes:
     )
 
 # --- Objective: minimize cost * |flow|
-prob += pulp.lpSum(abs_flow[(u, v, idx)] * abs(float(c))
+prob += pulp.lpSum(abs_flow[(u, v, idx)] * abs(float(c)) * 0.5
                    for idx, (u, v, c) in enumerate(edges))
 
 # --- Node balance constraints ---

@@ -1,2 +1,2 @@
 Status: Optimal
-Total cost: 113273471.53542185
+Total cost: 56636735.76771092

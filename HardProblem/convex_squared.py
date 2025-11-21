@@ -31,9 +31,6 @@ for _, r in df_lines.iterrows():
 # All nodes appearing anywhere
 nodes = sorted(set([u for u,_,_ in edges] + [v for _,v,_ in edges]))
 
-print(f"Number of nodes: {len(nodes)}")
-print(f"Number of edges: {len(edges)}")
-
 # --- CVXPY Convex Optimization Model ---
 
 # Create flow variables for each directed edge
@@ -46,7 +43,7 @@ costs = np.array([c for _, _, c in edges])
 # Objective: minimize sum of SQUARED flows weighted by costs
 # This is convex since square function is convex
 # Using cp.sum_squares or cp.square both work
-objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 1e-6)
+objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 0.5)
 
 # Build constraints for node balance
 constraints = []
@@ -54,10 +51,6 @@ constraints = []
 # Supply and demand values for all nodes
 supply_vals = {n: supply.get(n, 0.0) for n in nodes}
 demand_vals = {n: demand.get(n, 0.0) for n in nodes}
-
-total_supply = sum(supply_vals.values())
-total_demand = sum(demand_vals.values())
-print(f"Total supply: {total_supply}, Total demand: {total_demand}")
 
 # --- Add supply decision variables ---
 gen = {n: cp.Variable(name=f"gen_{n}") for n in nodes}
