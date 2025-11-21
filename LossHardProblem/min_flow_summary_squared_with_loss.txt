@@ -1,4 +1,0 @@
-Status: optimal_inaccurate
-Objective: Minimize sum of (cost * flow^2)
-Total cost: 4403.723018362163
-Solver: CVXPY
