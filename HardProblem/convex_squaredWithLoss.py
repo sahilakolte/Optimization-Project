@@ -46,7 +46,7 @@ costs = np.array([c for _, _, c in edges])
 # Objective: minimize sum of SQUARED flows weighted by costs
 # This is convex since square function is convex
 # Using cp.sum_squares or cp.square both work
-objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
+objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 1e-6)
 
 # Alternative formulations (all equivalent):
 # objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
@@ -82,7 +82,7 @@ for n in nodes:
         _, _, c_i = edges[idx]
         loss_terms.append(c_i * cp.square(flow[idx]))
 
-    loss = cp.sum(loss_terms) if loss_terms else 0
+    loss = cp.sum(loss_terms) * 1e-6 if loss_terms else 0
 
     # ---- New node flow constraint ----
     constraints.append(flow_in - flow_out + loss <= net_supply)
@@ -143,16 +143,16 @@ if prob.status in ["optimal", "optimal_inaccurate"]:
             })
     
     df_res = pd.DataFrame(rows)
-    df_res.to_csv("min_flow_solution_squared.csv", index=False)
+    df_res.to_csv("min_flow_solution_squared_with_loss.csv", index=False)
     
     # Write summary
-    with open("min_flow_summary_squared.txt", "w") as f:
+    with open("min_flow_summary_squared_with_loss.txt", "w") as f:
         f.write(f"Status: {prob.status}\n")
         f.write(f"Objective: Minimize sum of (cost * flow^2)\n")
         f.write(f"Total cost: {prob.value}\n")
         f.write(f"Solver: CVXPY\n")
     
     print(f"\nTotal cost (sum of cost * flow^2): {prob.value}")
-    print("Saved min_flow_solution_squared.csv and min_flow_summary_squared.txt.")
+    print("Saved min_flow_solution_squared_with_loss.csv and min_flow_summary_squared_with_loss.txt.")
 else:
     print(f"Optimization failed with status: {prob.status}")
