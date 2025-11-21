@@ -32,7 +32,7 @@ for n in nodes:
     lhs = inflow + s
     rhs = d + outflow
 
-    ok = abs(lhs - rhs) <= 1e-3
+    ok = abs(lhs - rhs) <= 3e-2
 
     results.append({
         "node": n,

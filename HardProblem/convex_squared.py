@@ -48,10 +48,6 @@ costs = np.array([c for _, _, c in edges])
 # Using cp.sum_squares or cp.square both work
 objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 1e-6)
 
-# Alternative formulations (all equivalent):
-# objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
-# objective = cp.Minimize(cp.quad_form(flow, np.diag(costs)))
-
 # Build constraints for node balance
 constraints = []
 
@@ -79,7 +75,7 @@ for n in nodes:
     flow_in = cp.sum(flow[in_edges]) if in_edges else 0
     flow_out = cp.sum(flow[out_edges]) if out_edges else 0
 
-    constraints.append(flow_in - flow_out == gen[n] - demand_vals.get(n, 0.0))
+    constraints.append(gen[n] + flow_in - flow_out == demand_vals.get(n, 0.0))
 
 # --- Solve using CVXPY ---
 print("\nSolving convex optimization problem with SQUARED flow objective...")
@@ -148,3 +144,16 @@ if prob.status in ["optimal", "optimal_inaccurate"]:
     print("Saved min_flow_solution_squared.csv and min_flow_summary_squared.txt.")
 else:
     print(f"Optimization failed with status: {prob.status}")
+
+# --- Save generation results ---
+gen_rows = []
+for n in nodes:
+    gen_rows.append({
+        "node": n,
+        "generation": float(gen[n].value),
+        "max_supply": float(supply_vals.get(n, 0.0))
+    })
+
+df_gen = pd.DataFrame(gen_rows)
+df_gen.to_csv("generation_results.csv", index=False)
+print("Saved generation_results.csv")
