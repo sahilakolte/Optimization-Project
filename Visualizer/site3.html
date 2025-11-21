@@ -335,12 +335,12 @@
       const lower = name.toLowerCase();
       return headers.findIndex(h => h.toLowerCase() === lower);
     }
-    const busIdx = idx('bus number');
-    const lonIdx = idx('lon');
-    const latIdx = idx('lat');
+    const busIdx = idx('Bus#');
+    const lonIdx = idx('Longitude');
+    const latIdx = idx('Latitude');
 
     if (busIdx === -1 || lonIdx === -1 || latIdx === -1) {
-      alert('Nodes CSV must have columns: Bus Number, Lon, Lat');
+      alert('Nodes CSV must have columns: Bus#, Longitude, Latitude');
       return;
     }
 
@@ -445,7 +445,16 @@
     let localFlowMax = -Infinity;
     let skipped = 0;
 
+    //Marker comment
+
     for (const e of edgesRaw) {
+      /*if (e.flow < 70) 
+      {
+        skipped++;
+        continue;
+
+      };*/
+
       const fromPos = busPos.get(e.from);
       const toPos   = busPos.get(e.to);
       if (!fromPos || !toPos) {
