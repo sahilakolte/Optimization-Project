@@ -46,7 +46,7 @@ costs = np.array([c for _, _, c in edges])
 # Objective: minimize sum of SQUARED flows weighted by costs
 # This is convex since square function is convex
 # Using cp.sum_squares or cp.square both work
-objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 1e-6)
+objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
 
 # Alternative formulations (all equivalent):
 # objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))))
@@ -56,7 +56,7 @@ objective = cp.Minimize(cp.sum(cp.multiply(costs, cp.square(flow))) * 1e-6)
 constraints = []
 
 # Supply and demand values for all nodes
-supply_vals = {n: supply.get(n, 0.0) for n in nodes}
+supply_vals = {n: supply.get(n, 0.0) * 100/80 for n in nodes}
 demand_vals = {n: demand.get(n, 0.0) for n in nodes}
 
 total_supply = sum(supply_vals.values())
@@ -65,18 +65,27 @@ print(f"Total supply: {total_supply}, Total demand: {total_demand}")
 
 # For each node: (flow in) - (flow out) <= supply - demand
 for n in nodes:
-    # Find indices of edges where n is the destination (flow in)
+    # Indices of edges where n is destination (flow in)
     in_edges = [idx for idx, (u, v, c) in enumerate(edges) if v == n]
-    # Find indices of edges where n is the source (flow out)
+    # Indices of edges where n is source (flow out)
     out_edges = [idx for idx, (u, v, c) in enumerate(edges) if u == n]
-    
+
     flow_in = cp.sum(flow[in_edges]) if in_edges else 0
     flow_out = cp.sum(flow[out_edges]) if out_edges else 0
-    
+
+    # Net supply/demand
     net_supply = supply_vals.get(n, 0.0) - demand_vals.get(n, 0.0)
-    
-    # Net flow into node should satisfy supply-demand constraint
-    constraints.append(flow_in - flow_out <= net_supply)
+
+    # ---- Quadratic loss term: sum( c_i * f_i^2 ) for all incoming edges i ----
+    loss_terms = []
+    for idx in out_edges:
+        _, _, c_i = edges[idx]
+        loss_terms.append(c_i * cp.square(flow[idx]))
+
+    loss = cp.sum(loss_terms) if loss_terms else 0
+
+    # ---- New node flow constraint ----
+    constraints.append(flow_in - flow_out + loss <= net_supply)
 
 # --- Solve using CVXPY ---
 print("\nSolving convex optimization problem with SQUARED flow objective...")
@@ -87,7 +96,9 @@ try:
     prob.solve(
         solver=cp.OSQP,
         verbose=True,
-        max_iter=300_000
+        max_iter=300_000,
+        eps_abs=1e-3,
+        eps_rel=1e-3
     )
     print(f"Solved with OSQP")
 except:
