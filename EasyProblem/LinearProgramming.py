@@ -1,22 +1,38 @@
 import pandas as pd
 import pulp
+import math
 
 # --- Paths (adjust if needed) ---
-supply_file = "../dataset/Gen_WI_Supply_Values.csv"
-demand_file = "../dataset/Gen_WI_Demand_Values.csv"
-lines_file  = "../dataset/Gen_WI_Lines.csv"
+supply_file   = "../dataset/Gen_WI_Supply_Values.csv"
+demand_file   = "../dataset/Gen_WI_Demand_Values.csv"
+lines_file    = "../dataset/Gen_WI_Lines.csv"
+location_file = "../dataset/Gen_WI_Bus_Locations.csv"
 
 # --- Load data ---
 df_supply = pd.read_csv(supply_file)
 df_demand = pd.read_csv(demand_file)
 df_lines  = pd.read_csv(lines_file)
+df_loc    = pd.read_csv(location_file)
 
-# Expect: supply.csv  -> [node, max_supply]
-#         demand.csv  -> [node, demand]
 max_supply = dict(zip(df_supply.iloc[:,0].astype(int),
                       df_supply.iloc[:,1].astype(float)))
 demand = dict(zip(df_demand.iloc[:,0].astype(int),
                   df_demand.iloc[:,1].astype(float)))
+bus_lon = dict(zip(df_loc.iloc[:,0].astype(int),
+                   df_loc.iloc[:,1].astype(float)))
+bus_lat = dict(zip(df_loc.iloc[:,0].astype(int),
+                   df_loc.iloc[:,2].astype(float)))
+
+def haversine(lon1, lat1, lon2, lat2):
+    R = 6371.0   # Earth radius in km
+    lon1, lat1, lon2, lat2 = map(math.radians,
+                                 [lon1, lat1, lon2, lat2])
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c    # distance in km
 
 # Lines assumed: [id, from, to, length, ...]
 from_col = df_lines.columns[1]
@@ -27,7 +43,10 @@ edges = []
 for _, r in df_lines.iterrows():
     u = int(r[from_col])
     v = int(r[to_col])
-    cost = float(r[len_col])
+
+    # Distance cost using haversine
+    cost = haversine(bus_lon[u], bus_lat[u], bus_lon[v], bus_lat[v])
+    
     edges.append((u, v, cost))
 
 # All nodes in the graph
