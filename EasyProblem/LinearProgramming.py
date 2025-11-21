@@ -126,6 +126,17 @@ total_cost = pulp.value(prob.objective)
 with open("min_flow_summary.txt", "w") as f:
     f.write(f"Status: {pulp.LpStatus[prob.status]}\n")
     f.write(f"Total cost: {total_cost}\n")
-
 print("Total cost:", total_cost)
 print("Saved min_flow_solution.csv and min_flow_summary.txt.")
+
+# --- Save generation results ---
+gen_rows = []
+for n in nodes:
+    gen_val = pulp.value(gen[n])
+    if gen_val is None:
+        gen_val = 0.0
+    gen_rows.append({"node": n, "generation": float(gen_val), "max_supply": max_supply.get(n, 0.0)})
+
+df_gen = pd.DataFrame(gen_rows)
+df_gen.to_csv("generation_results.csv", index=False)
+print("Saved generation_results.csv")

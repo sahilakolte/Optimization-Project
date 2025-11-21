@@ -63,20 +63,23 @@ total_supply = sum(supply_vals.values())
 total_demand = sum(demand_vals.values())
 print(f"Total supply: {total_supply}, Total demand: {total_demand}")
 
-# For each node: (flow in) - (flow out) <= supply - demand
+# --- Add supply decision variables ---
+gen = {n: cp.Variable(name=f"gen_{n}") for n in nodes}
+
+# Supply upper bounds
 for n in nodes:
-    # Find indices of edges where n is the destination (flow in)
+    max_sup = supply_vals.get(n, 0.0)
+    constraints.append(gen[n] >= 0)
+    constraints.append(gen[n] <= max_sup)
+
+for n in nodes:
     in_edges = [idx for idx, (u, v, c) in enumerate(edges) if v == n]
-    # Find indices of edges where n is the source (flow out)
     out_edges = [idx for idx, (u, v, c) in enumerate(edges) if u == n]
-    
+
     flow_in = cp.sum(flow[in_edges]) if in_edges else 0
     flow_out = cp.sum(flow[out_edges]) if out_edges else 0
-    
-    net_supply = supply_vals.get(n, 0.0) - demand_vals.get(n, 0.0)
-    
-    # Net flow into node should satisfy supply-demand constraint
-    constraints.append(flow_in - flow_out <= net_supply)
+
+    constraints.append(flow_in - flow_out == gen[n] - demand_vals.get(n, 0.0))
 
 # --- Solve using CVXPY ---
 print("\nSolving convex optimization problem with SQUARED flow objective...")
