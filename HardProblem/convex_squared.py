@@ -2,6 +2,9 @@ import pandas as pd
 import cvxpy as cp
 import numpy as np
 
+# --- Parameters ---
+voltage = 22_000
+
 # --- Paths (adjust if needed) ---
 supply_file = "../dataset/Gen_WI_Supply_Values.csv"
 demand_file = "../dataset/Gen_WI_Demand_Values.csv"
@@ -15,6 +18,9 @@ df_lines = pd.read_csv(lines_file)
 # Expect columns: supply: [node, supply], demand: [node, demand]
 supply = dict(zip(df_supply.iloc[:,0].astype(int), df_supply.iloc[:,1].astype(float)))
 demand = dict(zip(df_demand.iloc[:,0].astype(int), df_demand.iloc[:,1].astype(float)))
+
+supply = {k: v / voltage for k, v in supply.items()}
+demand = {k: v / voltage for k, v in demand.items()}
 
 # Assume lines are in columns: [something, from, to, length, ...]
 from_col = df_lines.columns[1]

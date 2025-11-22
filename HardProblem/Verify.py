@@ -10,10 +10,12 @@ df_lines.columns  = ['from', 'to', 'cost', 'flow', 'flow_squared', 'cost_times_f
 df_supply.columns = ['node', 'generation', 'max_supply']
 df_demand.columns = ['node', 'demand']
 
+voltage = 22_000
+
 # ---- Convert supply & demand into dictionaries ----
 supply = dict(zip(df_supply['node'], df_supply['generation']))
 max_supply = dict(zip(df_supply['node'], df_supply['max_supply']))
-demand = dict(zip(df_demand['node'], df_demand['demand']))
+demand = dict(zip(df_demand['node'], df_demand['demand'] / voltage))
 
 # ---- Get list of all nodes ----
 nodes = sorted(
